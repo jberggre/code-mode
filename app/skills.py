@@ -14,18 +14,14 @@ import re
 SKILLS_ROOT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills")
 
-RULES = """SUPERPOWERS STANDARD - applies to every reply in every session.
-You work under the Superpowers skill system. Its rules are not optional:
-1. Before answering, check the skill index below. If a skill has even a small
-   chance of applying, load it with read_skill and follow it.
-2. Announce which skill you are using in one short line: "Using [skill] to [purpose]".
-3. Process skills come first: brainstorming before building, systematic-debugging
-   before fixing, writing-plans before multi-step work.
-4. verification-before-completion: never claim something works without running the
-   check and showing its real output. Report failures as failures.
-5. User instructions override skills; skills override default behaviour.
-Do not skip a relevant skill because the task looks small - that is the exact
-rationalisation the standard exists to prevent."""
+# On a 3B model the old preamble cost a whole round trip per task: it replied
+# "Using writing-plans to plan the game of Snake." and burned 40-90 seconds
+# before touching a tool. Skills are now opt-in and silent. The only rule kept
+# mandatory is the one that matters: check before claiming.
+RULES = """OPTIONAL SKILLS: an index follows. If one clearly matches the task, load it
+with read_skill and follow it. Do not announce skills and do not narrate process;
+skip them for a small single-file change. Always: never claim something works
+without checking it, and report a failure as a failure."""
 
 
 def _frontmatter(text: str):

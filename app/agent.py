@@ -96,13 +96,56 @@ def _open_finished(workspace: str, written: list):
     return None, ""
 
 
+def _loads_lenient(text: str):
+    """json.loads, after escaping literal newlines inside strings.
+
+    The 3B's best page arrived as a valid tool block whose `content` string held
+    real line breaks. json.loads calls that invalid, so the whole write was
+    dropped and the turn ended on a 378-byte skeleton. Nothing about the call
+    was wrong except the escaping.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    fixed = []
+    in_string = False
+    escaped = False
+    for ch in text:
+        if in_string:
+            if escaped:
+                fixed.append(ch)
+                escaped = False
+            elif ch == "\\":
+                fixed.append(ch)
+                escaped = True
+            elif ch == '"':
+                fixed.append(ch)
+                in_string = False
+            elif ch == "\n":
+                fixed.append("\\n")
+            elif ch == "\r":
+                fixed.append("\\r")
+            elif ch == "\t":
+                fixed.append("\\t")
+            else:
+                fixed.append(ch)
+        else:
+            if ch == '"':
+                in_string = True
+            fixed.append(ch)
+    try:
+        return json.loads("".join(fixed))
+    except json.JSONDecodeError:
+        return None
+
+
 def _tool_json(buffer: str):
     """The first parseable tool call in a reply, in either accepted shape."""
     for regex in (TOOL_RE, FENCE_RE):
         for match in regex.finditer(buffer):
-            try:
-                call = json.loads(match.group(1))
-            except json.JSONDecodeError:
+            call = _loads_lenient(match.group(1))
+            if call is None:
                 continue
             if isinstance(call, dict) and str(call.get("name", "")).strip():
                 return call
@@ -137,6 +180,7 @@ def stream_agent(backend: dict, model: str, messages: list, cfg: dict,
     repairs = 0
     written = []
     opened = False
+    seen_calls = {}
     for step in range(max_steps):
         payload = dict(cfg)
         payload["system"] = build_system(cfg, workspace)
@@ -210,8 +254,28 @@ def stream_agent(backend: dict, model: str, messages: list, cfg: dict,
         if not isinstance(args, dict):
             args = {}
 
+        # The recorded loop: `git worktree add ...` five times, each returning the
+        # same fatal error. An identical call cannot return something new, so
+        # refuse it with the old result and make the model change course.
+        signature = "%s %s" % (name, json.dumps(args, sort_keys=True))
+        if signature in seen_calls:
+            prior_step, prior_result = seen_calls[signature]
+            yield {"tool_start": "\u2192 %s (the same call again)" % name}
+            result = ("refused: this is the same call you made at step %d, and it "
+                      "already returned: %s. Repeating it cannot change the result - "
+                      "fix the file, use a different command, or stop."
+                      % (prior_step, prior_result))
+            yield {"tool_result": "\u2190 %s" % " ".join(result.split())[:700]}
+            history.append({"role": "assistant", "content": buffer})
+            history.append({
+                "role": "user",
+                "content": '<result name="%s">\n%s\n</result>' % (name, result),
+            })
+            continue
+
         yield {"tool_start": "\u2192 %s %s" % (name, json.dumps(args)[:220])}
         result = toolbox.execute(name, args, workspace, allow_shell, request)
+        seen_calls[signature] = (step + 1, " ".join(str(result).split())[:300])
         if name == "write_file":
             path = _written_path(result)
             if path and path not in written:

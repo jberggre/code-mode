@@ -146,6 +146,33 @@ class RepairLoopTests(unittest.TestCase):
         self.assertEqual(len([e for e in events if "tool_start" in e]), 1)
         self.assertTrue(any("stopping here" in (e.get("log") or "") for e in events))
 
+    def test_the_same_call_twice_is_refused(self):
+        # Recorded live: `git worktree add ...` five times, same fatal error each
+        # time. An identical call cannot return anything new.
+        same = _write("snake.html", STUB)
+        events = self._run([same, same, "done"])
+        results = " ".join(e.get("tool_result", "") for e in events)
+        self.assertIn("same call you made", results)
+        self.assertTrue(any("the same call again" in (e.get("tool_start") or "")
+                            for e in events))
+
+    def test_a_tool_block_with_real_newlines_is_still_parsed(self):
+        # Recorded: the model's correct page arrived with literal line breaks
+        # inside the JSON string. json.loads rejected it and the write vanished.
+        raw = ('<tool>{"name": "write_file", "args": {"path": "x.html", '
+               '"content": "<!doctype html>\n<html>\n<body>hi</body>\n</html>"}}</tool>')
+        call = agent._tool_json(raw)
+        self.assertIsNotNone(call)
+        self.assertEqual(call["name"], "write_file")
+        self.assertIn("\n", call["args"]["content"])
+
+    def test_escaped_quotes_inside_the_content_still_parse(self):
+        raw = ('<tool>{"name": "write_file", "args": {"path": "x.html", '
+               '"content": "<p class=\\"a\\">hi</p>"}}</tool>')
+        call = agent._tool_json(raw)
+        self.assertIsNotNone(call)
+        self.assertIn('class="a"', call["args"]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

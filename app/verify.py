@@ -72,6 +72,31 @@ def _script_bodies(text: str) -> list:
             if "src=" not in attrs.lower()]
 
 
+def _balance(script: str):
+    """None when the brackets balance, else a sentence about where it stopped.
+
+    A small model that runs out of reply tokens leaves half a function behind;
+    that file is syntactically dead but can still look complete at a glance.
+    """
+    code = _strip_comments(script)
+    code = re.sub(r"'(?:\\.|[^'\\\n])*'", "''", code)
+    code = re.sub(r'"(?:\\.|[^"\\\n])*"', '""', code)
+    code = re.sub(r"`(?:\\.|[^`\\])*`", "``", code, flags=re.S)
+    pairs = {")": "(", "]": "[", "}": "{"}
+    stack = []
+    for ch in code:
+        if ch in "([{":
+            stack.append(ch)
+        elif ch in ")]}":
+            if not stack or stack.pop() != pairs[ch]:
+                return "has a stray %r, so the script is malformed." % ch
+    if stack:
+        return ("stops with %d unclosed bracket%s - the reply was cut off. Write the "
+                "whole file again, smaller if needed."
+                % (len(stack), "" if len(stack) == 1 else "s"))
+    return None
+
+
 def check_script(path: str, script: str) -> list:
     """A stub wearing the shape of a program: functions with nothing in them."""
     defects = []
@@ -157,9 +182,15 @@ def check_html(workspace: str, path: str, text: str) -> list:
         if body.strip() and len(body) < MIN_CODE:
             defects.append("the inline <script> in %s is only %d bytes of code."
                            % (path, len(body.strip())))
+    if text.lower().count("<script") > text.lower().count("</script>"):
+        defects.append("%s opens a <script> and never closes it, so the page is cut "
+                       "off. Write the whole file again." % path)
     script = "\n".join(bodies)
     if script.strip():
         defects.extend(check_script(path, script))
+        balance = _balance(script)
+        if balance:
+            defects.append("%s %s" % (path, balance))
     code = _strip_comments(script)
     has_loop = bool(LOOP_RE.search(code))
     has_input = bool(INPUT_RE.search(code))

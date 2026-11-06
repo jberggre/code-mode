@@ -160,6 +160,18 @@ gameLoop();
         self.assertTrue(any("#score" in d and "not in the page" in d for d in defects),
                         defects)
 
+    def test_a_cut_off_page_is_caught(self):
+        page = GOOD.replace("</script></body></html>", "")
+        defects = verify.check_html(self.workspace, "h.html", page)
+        self.assertTrue(any("never closes it" in d for d in defects), defects)
+
+    def test_unbalanced_brackets_are_caught(self):
+        # What a model that ran out of reply tokens leaves behind.
+        page = GOOD.replace("setInterval(() => { step(); draw(); }, 120);",
+                            "setInterval(() => { step(); draw();")
+        defects = verify.check_html(self.workspace, "i.html", page)
+        self.assertTrue(any("unclosed bracket" in d for d in defects), defects)
+
 
 if __name__ == "__main__":
     unittest.main()
