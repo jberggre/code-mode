@@ -82,6 +82,16 @@ meter, model, Trim/Unload, Code Mode session, handoff and GPU profile controls.
 Above the composer a context meter shows history against the 8k budget, so
 compaction is visible before it happens.
 
+**Mic** in the composer starts offline dictation with Windows' own recogniser:
+every phrase is inserted while you are still speaking, and pressing Mic again
+stops it. If the speech feature is not installed, the app says so instead of
+pretending to listen.
+
+Code mode is an agent, not a chat wrapper. The model gets file, search and shell
+tools, writes the files it is talking about, runs them, and only then reports. If
+it answers with a tutorial instead of calling a tool, the app sends the reply
+back once with one instruction: do the work now.
+
 If Ollama is staged but stopped, **Session → Start local runtime** launches
 `tools\ollama\ollama.exe serve`; the two pulled coder models appear on their own.
 

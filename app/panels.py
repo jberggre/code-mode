@@ -11,6 +11,7 @@ import threading
 import tkinter as tk
 
 import server as core
+import speech
 import theme
 import tools as toolbox
 
@@ -181,12 +182,26 @@ class RightPanel(tk.Frame):
         self.shell_btn = theme.button(pad, "Shell access \u00b7 on", self._toggle_shell,
                                       kind="bare", size=9, padx=8, pady=4, anchor="w")
         self.shell_btn.pack(fill="x")
-        theme.button(pad, "Dictate into composer", self.app.dictate, kind="bare",
-                     size=9, padx=8, pady=4, anchor="w").pack(fill="x")
-        theme.label(pad, "Runs as you, unsandboxed \u00b7 turn it off to be safe.",
-                    tone="dim2", size=8, wraplength=290, justify="left").pack(
-                        fill="x", pady=(4, 0))
+        self.mic_btn = theme.button(pad, "Dictate \u00b7 off", self.app.dictate,
+                                    kind="bare", size=9, padx=8, pady=4, anchor="w")
+        self.mic_btn.pack(fill="x")
+        # Packed by offer_speech_install() only if the background probe finds no
+        # recogniser - probing here would block the window for a second at start.
+        self.speech_btn = theme.button(pad, "Install Windows speech",
+                                       self.app.install_speech, kind="bare",
+                                       size=9, padx=8, pady=4, anchor="w")
+        self.note = theme.label(pad, "Runs as you, unsandboxed \u00b7 turn it off to be safe.",
+                                tone="dim2", size=8, wraplength=290, justify="left")
+        self.note.pack(fill="x", pady=(4, 0))
         return view
+
+    def offer_speech_install(self, missing: bool) -> None:
+        if missing:
+            self.speech_btn.pack(fill="x")
+            self.note.pack_forget()
+            self.note.pack(fill="x", pady=(4, 0))
+        else:
+            self.speech_btn.pack_forget()
 
     def _start_runtime(self) -> None:
         self.app.q.put(("note", "starting the portable Ollama server\u2026", None))
@@ -223,6 +238,8 @@ class RightPanel(tk.Frame):
             text=app.backend["label"] if app.backend else "no runtime answering")
         self.agent_btn.configure(text="Agent tools \u00b7 %s" % ("on" if app.agent_on else "off"))
         self.shell_btn.configure(text="Shell access \u00b7 %s" % ("on" if app.shell_on else "off"))
+        self.mic_btn.configure(
+            text="Dictate \u00b7 %s" % ("listening" if app.listening else "off"))
         self.shell_note.configure(
             text="" if app.shell_on else "shell access is off \u00b7 Run will refuse",
             fg=theme.DIM2 if app.shell_on else theme.WARN)

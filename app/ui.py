@@ -26,6 +26,7 @@ import memory
 import panels
 import server as core
 import session_store
+import speech
 import theme
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -71,6 +72,8 @@ def own_rss_mb() -> float:
 
 
 class CodeMode(tk.Tk):
+    HINT = "Enter to send \u00b7 Shift+Enter for a new line \u00b7 Ctrl+L new chat"
+
     def __init__(self, no_shell: bool = False):
         super().__init__()
 
@@ -104,6 +107,8 @@ class CodeMode(tk.Tk):
         self.sidebar_visible = True
         self.panel_visible = True
         self.last_rss = 0.0
+        self.dictation = None
+        self.listening = False
 
         self._build()
         self._apply_mode(self.state_mode, save=False)
@@ -111,6 +116,8 @@ class CodeMode(tk.Tk):
         self._render_history()
         self._resume_banner()
         self._update_ram()
+        threading.Thread(target=self._probe_speech, daemon=True).start()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(60, self._drain)
         self.after(20000, self._tick)
 
@@ -286,12 +293,15 @@ class CodeMode(tk.Tk):
         self.send_btn.pack(side="right", padx=(6, 0))
         self.stop_btn = theme.button(row, "\u25a0", self.stop, kind="danger",
                                      size=10, padx=10, pady=4)
+        # Dictation belongs next to the text box, not two levels deep in a panel.
+        self.mic_btn = theme.button(row, "Mic", self.dictate, kind="ghost",
+                                    size=9, padx=10, pady=4)
+        self.mic_btn.pack(side="right", padx=(6, 0))
 
         foot = tk.Frame(card, bg=theme.SURFACE)
         foot.pack(fill="x", padx=12, pady=(0, 8))
-        self.stat_lbl = theme.label(
-            foot, "Enter to send \u00b7 Shift+Enter for a new line \u00b7 Ctrl+L new chat",
-            tone="dim2", size=8, bg=theme.SURFACE)
+        self.stat_lbl = theme.label(foot, self.HINT, tone="dim2", size=8,
+                                    bg=theme.SURFACE)
         self.stat_lbl.pack(side="left")
         self.ctx_lbl = theme.label(foot, "", tone="dim2", size=8, bg=theme.SURFACE)
         self.ctx_lbl.pack(side="right")
@@ -558,6 +568,8 @@ class CodeMode(tk.Tk):
                 self._runtime_help()
                 return
 
+        if self.listening:
+            self.stop_dictation()
         self.input.delete("1.0", "end")
         self.input.configure(height=1)
         self.messages.append({"role": "user", "content": text})
@@ -650,6 +662,8 @@ class CodeMode(tk.Tk):
                     self._update_ram()
                 elif kind == "dictation":
                     self._dictation_result(payload or {})
+                elif kind == "speech":
+                    self.panel.offer_speech_install(not payload)
         except queue.Empty:
             pass
         except Exception as exc:  # noqa: BLE001 - one bad event must not stop the loop
@@ -692,6 +706,8 @@ class CodeMode(tk.Tk):
                         "    ollama pull qwen2.5-coder:3b\n", "tool")
 
     def new_chat(self) -> None:
+        if self.listening:
+            self.stop_dictation()
         self.gen += 1
         archived = memory.archive(self.messages, "cleared") if self.messages else ""
         if archived:
@@ -812,37 +828,100 @@ class CodeMode(tk.Tk):
             "on" if self.shell_on else "off \u00b7 run_command and Run will refuse"), "sys")
 
     def dictate(self) -> None:
-        script = os.path.join(ROOT, "scripts", "dictate.ps1")
-        if not os.path.exists(script):
-            self._write("\nmic: scripts/dictate.ps1 is missing\n", "sys")
+        """Toggle live dictation: phrases land in the composer as you speak."""
+        if self.listening:
+            self.stop_dictation()
             return
-        self._write("\nlistening \u00b7 speak now, it stops when you pause\n", "sys")
+        self.listening = True
+        self.mic_btn.configure(text="Stop")
+        self.stat_lbl.configure(text="listening \u00b7 speak, then pause \u00b7 Mic stops")
+        self.dictation = speech.Dictation(
+            on_text=lambda text: self.q.put(("dictation", {"text": text}, None)),
+            on_error=lambda why: self.q.put(("dictation", {"error": why}, None)))
+        if not self.dictation.start():
+            self.stop_dictation()
+        elif hasattr(self, "panel"):
+            self.panel.refresh(self.last_rss)
+
+    def stop_dictation(self) -> None:
+        talker, self.dictation = self.dictation, None
+        if talker is not None:
+            talker.stop()
+        self.listening = False
+        if hasattr(self, "mic_btn"):
+            self.mic_btn.configure(text="Mic")
+        if hasattr(self, "stat_lbl"):
+            self.stat_lbl.configure(text=self.HINT)
+        if hasattr(self, "panel"):
+            self.panel.refresh(self.last_rss)
+
+    def _on_close(self) -> None:
+        self.stop_dictation()
+        try:
+            self._save_session()
+        except Exception:  # noqa: BLE001 - closing must not raise
+            pass
+        self.destroy()
+
+    def _probe_speech(self) -> None:
+        """Off the UI thread: does this Windows have a recogniser at all?"""
+        try:
+            languages = speech.installed_languages()
+        except Exception:  # noqa: BLE001 - a probe must never break startup
+            return
+        self.q.put(("speech", languages, None))
+
+    def install_speech(self) -> None:
+        """Add the Windows speech feature. Needs one UAC approval, nothing else."""
+        script = os.path.join(ROOT, "scripts", "install-speech.ps1")
+        if not os.path.exists(script):
+            self._write("\nscripts/install-speech.ps1 is missing\n", "err")
+            return
+        self._write("\nasking Windows to install its speech recogniser \u00b7 "
+                    "approve the UAC prompt\n", "sys")
 
         def job():
             try:
-                proc = core.subprocess.run(
+                core.subprocess.run(
                     ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                     "-File", script], capture_output=True, text=True, timeout=60,
-                    encoding="utf-8", errors="replace")
-                text = (proc.stdout or "").strip()
-                error = (proc.stderr or "").strip()
-            except Exception as exc:  # noqa: BLE001
-                text, error = "", "%s: %s" % (type(exc).__name__, exc)
-            self.q.put(("dictation", {"text": text, "error": error}, None))
+                     "-Command", "Start-Process powershell -Verb RunAs -ArgumentList "
+                     "'-NoProfile','-ExecutionPolicy','Bypass','-File','%s'"
+                     % script.replace("'", "''")],
+                    capture_output=True, text=True, timeout=30)
+                languages = speech.installed_languages()
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                self.q.put(("note", "install failed: %s" % exc, None))
+                return
+            if languages:
+                self.q.put(("note", "speech recogniser installed (%s) \u00b7 Mic works now"
+                            % ", ".join(languages), None))
+            else:
+                self.q.put(("note", "Windows still reports no recogniser \u00b7 finish it "
+                                    "in Settings > Time & language > Speech", None))
 
         threading.Thread(target=job, daemon=True).start()
 
     def _dictation_result(self, info: dict) -> None:
-        text = info.get("text") or ""
-        if text:
-            current = self.input.get("1.0", "end-1c")
-            if current.strip() and not current.endswith((" ", "\n")):
-                self.input.insert("end", " ")
-            self.input.insert("end", text)
-            self.input.focus_set()
-            self._grow_input()
-        else:
-            self._write("\nmic: %s\n" % (info.get("error") or "nothing heard"), "sys")
+        error = info.get("error")
+        if error:
+            self.stop_dictation()
+            self._write("\nmic: %s\n" % error, "err")
+            low = error.lower()
+            if "speech" in low or "recogni" in low:
+                self._write("This Windows install has no speech recogniser, so the mic "
+                            "cannot work yet. Use Session \u2192 Install Windows speech "
+                            "(one UAC prompt), or Settings > Time & language > Speech.\n",
+                            "sys")
+            return
+        text = (info.get("text") or "").strip()
+        if not text:
+            return
+        current = self.input.get("1.0", "end-1c")
+        if current and not current.endswith((" ", "\n")):
+            self.input.insert("end", " ")
+        self.input.insert("end", text)
+        self.input.focus_set()
+        self._grow_input()
 
     def _session_script(self) -> str:
         return os.path.join(ROOT, "scripts", "code-mode.ps1")

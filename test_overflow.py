@@ -1,4 +1,11 @@
+import os
 import sys
+import tempfile
+
+# This script once wrote a fake handoff into the real state folder, and every
+# later prompt inherited it for a week. Keep its writes in a throwaway folder.
+os.environ.setdefault("CODEMODE_STATE", tempfile.mkdtemp(prefix="codemode-test-"))
+
 sys.path.insert(0, '.')
 from app.memory import needs_compaction, budget, history_tokens, compact, archive, write_handoff, read_handoff, handoff_note, resume_note
 from app.skills import read_skill
