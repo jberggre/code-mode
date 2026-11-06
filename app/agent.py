@@ -82,9 +82,12 @@ def _user_request(history: list) -> str:
 def _written_path(result: str):
     """The path a successful write_file reported, or None."""
     text = str(result or "")
-    if not text.startswith("wrote "):
+    if not text.startswith(("wrote ", "edited ")):
         return None
     match = re.match(r"wrote \d+ bytes to (.+?)(?: \(replaced|$)", text)
+    if match:
+        return match.group(1).strip()
+    match = re.match(r"edited (.+?)(?: \(old copy|$)", text)
     return match.group(1).strip() if match else None
 
 
@@ -276,7 +279,7 @@ def stream_agent(backend: dict, model: str, messages: list, cfg: dict,
         yield {"tool_start": "\u2192 %s %s" % (name, json.dumps(args)[:220])}
         result = toolbox.execute(name, args, workspace, allow_shell, request)
         seen_calls[signature] = (step + 1, " ".join(str(result).split())[:300])
-        if name == "write_file":
+        if name in ("write_file", "edit_file"):
             path = _written_path(result)
             if path and path not in written:
                 written.append(path)
@@ -291,7 +294,7 @@ def stream_agent(backend: dict, model: str, messages: list, cfg: dict,
         # Check the bytes as soon as they land, not only once the model stops
         # talking. Left until the end, the 3B wrote a working page and then spent
         # five steps on `git worktree add` instead of finishing or fixing it.
-        if name == "write_file" and written:
+        if name in ("write_file", "edit_file") and written:
             defects = verify.check_turn(workspace, written)
             if defects and repairs < MAX_REPAIRS and step < max_steps - 1:
                 repairs += 1

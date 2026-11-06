@@ -30,6 +30,14 @@ setInterval(() => { const head = [...snake[0]]; snake.shift();
   g.fillRect(head[0], head[1], 10, 10); }, 100);
 </script></body></html>"""
 
+FROZEN = """<!doctype html><html><head><title>t</title></head><body>
+<canvas id="c" width="200" height="200"></canvas>
+<script>
+const g = document.getElementById('c').getContext('2d');
+document.addEventListener('keydown', e => {});
+setInterval(() => { g.fillStyle = '#fff'; g.fillRect(10, 10, 20, 20); }, 100);
+</script></body></html>"""
+
 BLANK = """<!doctype html><html><head><title>t</title></head><body>
 <canvas id="c" width="200" height="200"></canvas><p id="score">0</p>
 <script>
@@ -65,6 +73,12 @@ class SmokeTests(unittest.TestCase):
         workspace, path = self._page(BLANK)
         defects = smoke.check(workspace, path)
         self.assertTrue(any("draws nothing" in d for d in defects), defects)
+
+    def test_a_page_that_draws_the_same_thing_forever_is_caught(self):
+        # Static checks see a canvas, a loop and a listener. The canvas is frozen.
+        workspace, path = self._page(FROZEN)
+        defects = smoke.check(workspace, path)
+        self.assertTrue(any("frozen" in d for d in defects), defects)
 
     def test_the_probe_is_not_written_into_the_workspace(self):
         workspace, path = self._page(GOOD)

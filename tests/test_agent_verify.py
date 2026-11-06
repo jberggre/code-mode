@@ -35,10 +35,14 @@ document.addEventListener('keydown', (e) => {
 });
 function draw() {
   x.fillStyle = '#111'; x.fillRect(0,0,400,400);
-  x.fillStyle = '#0f0'; snake.forEach(s => x.fillRect(s.x*10, s.y*10, 9, 9));
+  x.fillStyle = '#0f0'; snake.forEach(s => x.fillRect(s.x, s.y, 10, 10));
   document.getElementById('score').textContent = score;
 }
-setInterval(() => { draw(); }, 120);
+function step() {
+  const head = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+  snake.unshift(head); snake.pop();
+}
+setInterval(() => { step(); draw(); }, 120);
 </script></body></html>
 """
 
@@ -145,6 +149,12 @@ class RepairLoopTests(unittest.TestCase):
         self.assertEqual(self.opened, ["snake.html"])
         self.assertEqual(len([e for e in events if "tool_start" in e]), 1)
         self.assertTrue(any("stopping here" in (e.get("log") or "") for e in events))
+
+    def test_an_edit_counts_as_something_written(self):
+        self.assertEqual(
+            agent._written_path("edited snake.html (old copy at .codemode/undo/x.bak)"),
+            "snake.html")
+        self.assertEqual(agent._written_path("edited snake.html"), "snake.html")
 
     def test_the_same_call_twice_is_refused(self):
         # Recorded live: `git worktree add ...` five times, same fatal error each

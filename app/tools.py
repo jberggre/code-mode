@@ -37,6 +37,10 @@ TOOLS = {
         "args": {"path": "relative path", "content": "full new file contents"},
         "help": "Create or overwrite a file. Send the whole file, not a fragment.",
     },
+    "edit_file": {
+        "args": {"path": "relative path", "old": "exact text to replace", "new": "replacement text"},
+        "help": "Replace one unique snippet in an existing file. Prefer this for small fixes.",
+    },
     "list_dir": {
         "args": {"path": "relative directory (optional)"},
         "help": "List a directory.",
@@ -119,6 +123,45 @@ def read_file(workspace: str, path: str, start=1, limit=400) -> str:
     end = min(len(lines), start + limit - 1)
     body = "\n".join("%5d  %s" % (i, lines[i - 1]) for i in range(start, end + 1))
     return "%s lines %d-%d of %d\n%s" % (path, start, end, len(lines), body)
+
+
+def edit_file(workspace: str, path: str, old: str, new: str, request: str = "") -> str:
+    """Replace one unique snippet, so a fix does not mean rewriting the file.
+
+    A 3B reproduces a 2 KB page badly but copies five lines well, and every
+    rewrite is another chance to break working code that was already right.
+    """
+    allowed, why = policy.check_write(workspace, path, request)
+    if not allowed:
+        return why
+    target = _resolve(workspace, path)
+    if not target:
+        return "refused: %s is outside the workspace" % path
+    if not os.path.isfile(target):
+        return "not found: %s (use write_file to create a new file)" % path
+    old = old if isinstance(old, str) else str(old)
+    new = new if isinstance(new, str) else str(new)
+    if not old.strip():
+        return "refused: empty old text"
+    try:
+        with open(target, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError as exc:
+        return "could not read %s: %s" % (path, exc)
+    seen = text.count(old)
+    if seen == 0:
+        return ("refused: that exact text is not in %s. Read the file and copy the "
+                "line character for character." % path)
+    if seen > 1:
+        return ("refused: that text appears %d times in %s. Include the lines around "
+                "it so it is unique." % (seen, path))
+    kept = policy.snapshot(workspace, target)
+    with open(target, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text.replace(old, new, 1))
+    result = "edited %s" % path
+    if kept:
+        result += " (old copy at %s)" % kept
+    return result
 
 
 def write_file(workspace: str, path: str, content: str, request: str = "") -> str:
@@ -244,6 +287,9 @@ def execute(name: str, args: dict, workspace: str, allow_shell: bool = True,
         if name == "write_file":
             return write_file(workspace, args.get("path", ""), args.get("content", ""),
                               request)
+        if name == "edit_file":
+            return edit_file(workspace, args.get("path", ""), args.get("old", ""),
+                             args.get("new", ""), request)
         if name == "list_dir":
             return list_dir(workspace, args.get("path", "."))
         if name == "search_code":

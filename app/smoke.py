@@ -5,9 +5,10 @@ first tick: the head was never pushed back, so the next frame threw
 "TypeError: snake[0] is not iterable" and the canvas stayed blank. The source
 looked complete. Reading code cannot prove it runs.
 
-Windows ships Edge, so the page can be executed headless and offline: a probe
+Windows ships Edge, so the page is executed headless and offline. A probe
 injected before the page's own script records JS errors, draw calls and input
-listeners, then writes the result into the DOM that `--dump-dom` prints back.
+listeners; it also takes two samples of the canvas a second apart, after sending
+arrow keys, so a page that paints once and freezes is caught too.
 
 If no browser is found this returns [] (unverified) rather than inventing a
 failure - a missing checker must not look like a broken page.
@@ -23,7 +24,7 @@ import shutil
 import subprocess
 import tempfile
 
-BUDGET_MS = 1100
+BUDGET_MS = 1500
 CANDIDATES = (
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
     r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
@@ -32,10 +33,10 @@ CANDIDATES = (
 )
 
 # Injected before the page's own script so it wraps addEventListener first and
-# therefore sees the game's listeners being registered.
+# therefore sees the game registering its listeners.
 PROBE = """<script>
 (function () {
-  var log = {errors: [], draws: 0, inputs: 0};
+  var log = {errors: [], draws: 0, inputs: 0, frames: [], canvas: null};
   window.addEventListener('error', function (e) {
     log.errors.push(String((e && e.message) || e));
   });
@@ -49,21 +50,39 @@ PROBE = """<script>
     if (/^(keydown|keyup|pointerdown|touchstart)$/.test(String(type))) log.inputs++;
     return listen.apply(this, arguments);
   };
+  function snap() {
+    var c = document.querySelector('canvas');
+    if (!c) return null;
+    log.canvas = [c.width, c.height];
+    try { return c.toDataURL(); } catch (e) { return null; }
+  }
+  function press(key) {
+    var ev;
+    try { ev = new KeyboardEvent('keydown', {key: key, bubbles: true}); }
+    catch (e) { return; }
+    document.dispatchEvent(ev);
+    window.dispatchEvent(ev);
+  }
   setTimeout(function () {
-    var canvas = document.querySelector('canvas');
+    log.frames.push(snap());
+    ['ArrowRight', 'ArrowDown', 'KeyD', 'KeyS'].forEach(press);
+  }, 600);
+  setTimeout(function () {
+    log.frames.push(snap());
     var out = document.createElement('pre');
     out.id = '__probe';
     out.textContent = JSON.stringify({
       errors: log.errors.slice(0, 3),
       draws: log.draws,
       inputs: log.inputs,
-      canvas: canvas ? [canvas.width, canvas.height] : null,
+      canvas: log.canvas,
+      changed: log.frames.length === 2 && log.frames[0] !== log.frames[1],
       score: (document.getElementById('score') || {}).textContent || null
     });
     document.body.appendChild(out);
-  }, %d);
+  }, 1200);
 })();
-</script>""" % (BUDGET_MS - 300)
+</script>"""
 
 PROBE_RE = re.compile(r'id="__probe"[^>]*>(.*?)</pre>', re.S)
 
@@ -111,7 +130,7 @@ def _run(exe: str, url: str, profile: str, flag: str):
 
 
 def check(workspace: str, path: str) -> list:
-    """Defects seen by actually loading the page, [] when it runs or is unproven."""
+    """Defects seen by actually loading and playing the page; [] when it runs."""
     exe = browser()
     if not exe:
         return []
@@ -157,6 +176,10 @@ def check(workspace: str, path: str) -> list:
             defects.append(
                 "%s never registers keyboard or touch input, so nothing the player "
                 "presses can steer." % path)
+        if data.get("canvas") and data.get("draws") and data.get("changed") is False:
+            defects.append(
+                "%s is frozen: the canvas is byte-for-byte identical two samples a "
+                "second apart, even after arrow keys, so the picture never updates." % path)
         return defects
     finally:
         shutil.rmtree(temp, ignore_errors=True)

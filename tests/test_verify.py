@@ -32,7 +32,11 @@ function step() {
   if (head.x === food.x && head.y === food.y) { score++; document.getElementById('score').textContent = score; }
   else { snake.pop(); }
 }
-function draw() { x.fillStyle = '#111'; x.fillRect(0,0,400,400); }
+function draw() {
+  x.fillStyle = '#111'; x.fillRect(0,0,400,400);
+  x.fillStyle = '#0f0'; snake.forEach(s => x.fillRect(s.x, s.y, 10, 10));
+  document.getElementById('score').textContent = score;
+}
 setInterval(() => { step(); draw(); }, 120);
 </script></body></html>
 """
@@ -67,7 +71,7 @@ class VerifyTests(unittest.TestCase):
         self.assertIn("no such file exists", joined)
 
     def test_placeholder_code_is_caught(self):
-        page = GOOD.replace("function draw() { x.fillStyle = '#111'; x.fillRect(0,0,400,400); }",
+        page = GOOD.replace("x.fillStyle = '#0f0'; snake.forEach(s => x.fillRect(s.x, s.y, 10, 10));",
                             "// Game logic goes here")
         defects = verify.check_html(self.workspace, "a.html", page)
         self.assertTrue(any("placeholder" in d for d in defects), defects)
@@ -132,11 +136,9 @@ gameLoop();
         self.assertIn("cannot steer", joined)
         self.assertFalse(verify.playable(self.workspace, "snake.html"))
 
-    def test_a_canvas_that_is_never_drawn_to_is_caught(self):
-        page = GOOD.replace("const c = document.getElementById('c'), x = c.getContext('2d');",
-                            "const c = document.getElementById('c');")
-        page = page.replace("x.fillStyle = '#111'; x.fillRect(0,0,400,400);", "")
-        page = page.replace("function draw() {  }", "function draw() { }")
+    def test_a_script_whose_functions_are_empty_is_caught(self):
+        page = ("<script>const c=document.getElementById('c'), x=c.getContext('2d');\n"
+                "function step() { }\nsetInterval(step, 120);</script>")
         defects = verify.check_script("d.html", page)
         self.assertTrue(any("empty body" in d for d in defects), defects)
 

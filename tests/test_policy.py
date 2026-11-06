@@ -79,6 +79,38 @@ class ReversibilityTests(unittest.TestCase):
         with open(os.path.join(self.workspace, kept), encoding="utf-8") as fh:
             self.assertEqual(fh.read(), "original\n")
 
+    def test_edit_file_replaces_one_unique_snippet(self):
+        path = os.path.join(self.workspace, "notes.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("alpha\nbeta\n")
+        result = tools.edit_file(self.workspace, "notes.md", "beta", "gamma")
+        self.assertTrue(result.startswith("edited"), result)
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "alpha\ngamma\n")
+
+    def test_edit_file_refuses_ambiguous_or_missing_text(self):
+        path = os.path.join(self.workspace, "twice.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("x\nx\n")
+        self.assertIn("appears 2 times", tools.edit_file(self.workspace, "twice.md", "x", "y"))
+        self.assertIn("not in", tools.edit_file(self.workspace, "twice.md", "zzz", "y"))
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "x\nx\n")
+
+    def test_edit_file_obeys_ownership_and_keeps_a_copy(self):
+        os.makedirs(os.path.join(self.workspace, "app"), exist_ok=True)
+        path = os.path.join(self.workspace, "app", "ui.py")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("IMPORTANT = 1\n")
+        self.assertTrue(tools.edit_file(
+            self.workspace, "app/ui.py", "IMPORTANT = 1", "IMPORTANT = 9"
+        ).startswith("refused"))
+        result = tools.edit_file(
+            self.workspace, "app/ui.py", "IMPORTANT = 1", "IMPORTANT = 2",
+            request="set IMPORTANT to 2 in app/ui.py")
+        self.assertTrue(result.startswith("edited"), result)
+        self.assertIn(".codemode/undo/", result)
+
     def test_a_refused_write_leaves_the_file_alone(self):
         os.makedirs(os.path.join(self.workspace, "app"))
         target = os.path.join(self.workspace, "app", "ui.py")
