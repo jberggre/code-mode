@@ -7,3 +7,4 @@ tools/install.log
 %DESKTOP%/
 %USERPROFILE%/
 artifacts/
+.codemode/

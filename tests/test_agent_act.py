@@ -72,6 +72,18 @@ class NudgeTests(unittest.TestCase):
         self.assertTrue(any("without acting" in (e.get("log") or "") for e in events))
         self.assertTrue(any("tool_start" in e for e in events))
 
+    def test_a_short_dead_end_is_nudged_into_action(self):
+        # Observed live: it answered "The game loop is not running." and stopped,
+        # having written nothing, because a one-line reply was not "prose" and
+        # the retry only fired for refusals and tutorials.
+        events, calls = self._run([
+            "The game loop is not running.",
+            '<tool>{"name": "write_file", "args": {"path": "snake.html", "content": "<html></html>"}}</tool>',
+            "Wrote snake.html.",
+        ], "make me a game of snake i can play")
+        self.assertGreaterEqual(calls, 3)
+        self.assertTrue(any("answered without acting" in (e.get("log") or "") for e in events))
+
     def test_a_refusal_is_nudged_into_building(self):
         # The exact reply recorded from qwen2.5-coder:3b on this machine.
         events, calls = self._run([

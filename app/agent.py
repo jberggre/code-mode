@@ -15,6 +15,7 @@ import server as core
 import memory
 import skills
 import tools as toolbox
+import verify
 
 TOOL_RE = re.compile(r"<tool>\s*(\{.*?\})\s*</tool>", re.S)
 # Small models sometimes wrap the call in a fence even when told not to.
@@ -45,7 +46,54 @@ REFUSAL_NUDGE = (
     "allowed and expected. Do it now: emit one <tool> block with write_file, "
     "then run it. Do not refuse and do not explain instead of building."
 )
+VERIFY_NUDGE = (
+    "A check of what you just wrote found these problems, so it is not finished:\n"
+    "%s\nFix them now: one <tool> block, write_file with the complete corrected "
+    "file, nothing omitted. Then stop."
+)
 MAX_NUDGES = 2
+# How many times a failed check goes back to the model before we give up and
+# say so plainly instead of letting it claim success. Three attempts is what a 3B
+# needed on this machine: 4 defects, then 2, then a page that passed.
+MAX_REPAIRS = 3
+
+
+def _numbered(defects: list) -> str:
+    return "\n".join("%d. %s" % (i, d) for i, d in enumerate(defects, 1))
+
+
+def _user_request(history: list) -> str:
+    """The user's own words, captured before the model can add to the history.
+
+    Permission to touch the app's own files is read from this string and never
+    from a later message, so a model cannot grant itself access by writing "the
+    user asked me to edit app/server.py" into its own turn.
+    """
+    for message in reversed(history):
+        if message.get("role") != "user":
+            continue
+        text = str(message.get("content", ""))
+        if text.startswith("<result"):
+            continue
+        return text[:4000]
+    return ""
+
+
+def _written_path(result: str):
+    """The path a successful write_file reported, or None."""
+    text = str(result or "")
+    if not text.startswith("wrote "):
+        return None
+    match = re.match(r"wrote \d+ bytes to (.+?)(?: \(replaced|$)", text)
+    return match.group(1).strip() if match else None
+
+
+def _open_finished(workspace: str, written: list):
+    """Show the first page that passes the check, so the user can actually play it."""
+    for path in reversed(written):
+        if verify.playable(workspace, path):
+            return path, toolbox.show_artifact(workspace, path)
+    return None, ""
 
 
 def _tool_json(buffer: str):
@@ -74,11 +122,6 @@ def _wants_action(history: list) -> bool:
     return False
 
 
-def _looks_like_prose(buffer: str) -> bool:
-    """A tutorial or a code listing, not a one-line acknowledgement."""
-    return "```" in buffer or len(buffer.strip()) > 300
-
-
 def build_system(cfg: dict, workspace: str) -> str:
     parts = (skills.preamble(), memory.handoff_note(), cfg.get("system", ""),
              toolbox.system_help(workspace))
@@ -89,7 +132,11 @@ def stream_agent(backend: dict, model: str, messages: list, cfg: dict,
                  workspace: str, allow_shell: bool = True, max_steps: int = 12):
     """Yields {'delta'|'tool_start'|'tool_result'|'error'|'log': ...} events."""
     history = list(messages)
+    request = _user_request(history)
     nudges = 0
+    repairs = 0
+    written = []
+    opened = False
     for step in range(max_steps):
         payload = dict(cfg)
         payload["system"] = build_system(cfg, workspace)
@@ -120,11 +167,34 @@ def stream_agent(backend: dict, model: str, messages: list, cfg: dict,
             if len(buffer) > emitted:
                 yield {"delta": buffer[emitted:]}
                 emitted = len(buffer)
+            # Files were written this turn: check them before believing the
+            # answer. "The game is running successfully" over a stub with a
+            # placeholder and a dead <script src> is the failure being fixed.
+            defects = verify.check_turn(workspace, written)
+            if defects and repairs < MAX_REPAIRS and step < max_steps - 1:
+                repairs += 1
+                history.append({"role": "assistant", "content": buffer})
+                history.append({"role": "user", "content": VERIFY_NUDGE % _numbered(defects)})
+                yield {"log": "checked the result \u00b7 %d problem%s \u00b7 sending it back"
+                       % (len(defects), "" if len(defects) == 1 else "s")}
+                continue
+            if defects:
+                yield {"log": "still broken after %d attempts: %s"
+                       % (repairs, "; ".join(defects)[:400])}
+            if written and not opened and not defects:
+                path, message = _open_finished(workspace, written)
+                if path:
+                    opened = True
+                    yield {"log": message}
             # The two recorded failures - a refusal, and a tutorial instead of
             # the file - both mean the workspace is untouched. Send it back.
             refusal = bool(REFUSAL_RE.search(buffer))
-            if (nudges < MAX_NUDGES and step < max_steps - 1 and _wants_action(history)
-                    and (refusal or _looks_like_prose(buffer))):
+            # Any no-write reply to a request for work is a dead end: the model
+            # answered "The game loop is not running." and stopped, having built
+            # nothing. Prose length is irrelevant - one nudge, then take no for
+            # an answer. Questions are excluded by _wants_action.
+            if (not written and nudges < MAX_NUDGES and step < max_steps - 1
+                    and _wants_action(history)):
                 nudges += 1
                 history.append({"role": "assistant", "content": buffer})
                 history.append({"role": "user",
@@ -141,7 +211,11 @@ def stream_agent(backend: dict, model: str, messages: list, cfg: dict,
             args = {}
 
         yield {"tool_start": "\u2192 %s %s" % (name, json.dumps(args)[:220])}
-        result = toolbox.execute(name, args, workspace, allow_shell)
+        result = toolbox.execute(name, args, workspace, allow_shell, request)
+        if name == "write_file":
+            path = _written_path(result)
+            if path and path not in written:
+                written.append(path)
         yield {"tool_result": "\u2190 %s" % " ".join(str(result).split())[:700]}
 
         history.append({"role": "assistant", "content": buffer})
@@ -149,5 +223,23 @@ def stream_agent(backend: dict, model: str, messages: list, cfg: dict,
             "role": "user",
             "content": '<result name="%s">\n%s\n</result>' % (name, str(result)[:6000]),
         })
+
+        # Check the bytes as soon as they land, not only once the model stops
+        # talking. Left until the end, the 3B wrote a working page and then spent
+        # five steps on `git worktree add` instead of finishing or fixing it.
+        if name == "write_file" and written:
+            defects = verify.check_turn(workspace, written)
+            if defects and repairs < MAX_REPAIRS and step < max_steps - 1:
+                repairs += 1
+                history.append({"role": "user", "content": VERIFY_NUDGE % _numbered(defects)})
+                yield {"log": "checked the result \u00b7 %d problem%s \u00b7 sending it back"
+                       % (len(defects), "" if len(defects) == 1 else "s")}
+                continue
+            if not defects:
+                path, message = _open_finished(workspace, written)
+                if path:
+                    yield {"log": message}
+                    yield {"log": "the page checks out - stopping here"}
+                    return
 
     yield {"delta": "\n(stopped after %d tool steps)" % max_steps}
