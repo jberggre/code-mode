@@ -78,6 +78,14 @@ class CodeMode(tk.Tk):
         super().__init__()
 
         self.title("CodeMode")
+        # Same artwork as the desktop shortcut, so alt-tab and the taskbar do not
+        # show pythonw's icon instead of the app's.
+        icon = os.path.join(ROOT, "assets", "codemode.ico")
+        if os.path.exists(icon):
+            try:
+                self.iconbitmap(default=icon)
+            except tk.TclError:
+                pass
         # This panel is 1920x1080 at 150%: the logical work area is about
         # 1280x680, so anything taller pushes the composer off the screen.
         self.geometry("1264x680")

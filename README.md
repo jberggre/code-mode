@@ -69,6 +69,14 @@ python app\ui.py --smoke    # one real prompt through the selected model, no win
 python app\ui.py --no-shell # start with shell access and terminal Run off
 ```
 
+**Desktop shortcut.** `tools\make-shortcut.ps1` puts *Code Mode* on the desktop,
+launching `pythonw app\ui.py` from the project folder so no console appears, with
+`assets\codemode.ico` as its thumbnail. That icon is generated from the artwork
+the shell was designed around; rebuild it after changing the art with
+`python tools\make_icon.py assets\icon-source.jpg assets\codemode.ico` (stdlib
+only, seven sizes from 16 to 256 px). The window uses the same file for its
+taskbar and alt-tab icon.
+
 The desktop window is the default because the interface must not compete with
 the model for memory. It has no HTTP server and no port: it talks to Ollama or
 LM Studio directly, and shows its own footprint next to free RAM.
