@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+state/
+tools/ollama/
+tools/ollama.zip
+tools/install.log
+%DESKTOP%/
+%USERPROFILE%/
