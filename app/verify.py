@@ -22,6 +22,8 @@ import ast
 import os
 import re
 
+import smoke
+
 # Stubs seen in real output from qwen2.5-coder:3b on this machine.
 STUB_RE = re.compile(
     r"(game logic goes here|logic goes here|your code here|code goes here|"
@@ -244,7 +246,12 @@ def check_file(workspace: str, path: str) -> list:
 
     lower = path.lower()
     if lower.endswith((".html", ".htm")):
-        return check_html(workspace, path, text)
+        defects = check_html(workspace, path, text)
+        # Reading the source cannot prove the page runs: one page passed every
+        # static check while emptying its own snake array on the first tick.
+        if not defects:
+            defects.extend(smoke.check(workspace, path))
+        return defects
     if lower.endswith(".py"):
         return check_python(workspace, path, text)
     return []
