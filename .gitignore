@@ -6,3 +6,4 @@ tools/ollama.zip
 tools/install.log
 %DESKTOP%/
 %USERPROFILE%/
+artifacts/

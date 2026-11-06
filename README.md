@@ -12,8 +12,12 @@ Nothing here installs services, requires Node, or touches Xbox / Game Bar /
 Armoury Crate.
 
 ```
-app/server.py     Python 3.11 stdlib only: serves the UI, proxies chat, streams tokens
-app/index.html    the interface (dark, touch + keyboard friendly)
+app/ui.py         the desktop app: Freebuff-shaped shell, no server, no browser
+app/theme.py      palette + widget system (one orange accent on deep navy)
+app/panels.py     the right rail: real terminal + session/RAM controls
+app/session_store.py  atomic chat persistence, separate from the Code Mode file
+app/server.py     browser fallback: serves index.html, proxies chat, streams tokens
+app/index.html    the browser interface (dark, touch + keyboard friendly)
 scripts/debloat.ps1    reviewable permanent debloat (dry run by default)
 scripts/code-mode.ps1  free RAM for a coding session, restore it after
 start-codemode.cmd     double-click launcher
@@ -60,22 +64,37 @@ Double-click **`start-codemode.cmd`**, or:
 
 ```powershell
 python app\ui.py            # native window, no browser, no server
-python app\ui.py --selftest # print the app's own RAM and exit
+python app\ui.py --selftest # build the window, check the layout, print JSON, exit
+python app\ui.py --smoke    # one real prompt through the selected model, no window
+python app\ui.py --no-shell # start with shell access and terminal Run off
 ```
 
 The desktop window is the default because the interface must not compete with
 the model for memory. It has no HTTP server and no port: it talks to Ollama or
-LM Studio directly, and shows its own footprint in the status bar next to free
-RAM, so the cost of the app is always visible.
+LM Studio directly, and shows its own footprint next to free RAM.
+
+Its shape follows Freebuff: a workspace rail on the left, the transcript with
+the composer underneath it, and a terminal/session rail on the right. The header
+holds the Chat/Code switch, a model picker that fills in from whichever runtime
+answers, and one status chip. The right rail has two tabs: **Terminal**, a real
+PowerShell that refuses when shell access is off, and **Session**, with the RAM
+meter, model, Trim/Unload, Code Mode session, handoff and GPU profile controls.
+Above the composer a context meter shows history against the 8k budget, so
+compaction is visible before it happens.
+
+If Ollama is staged but stopped, **Session → Start local runtime** launches
+`tools\ollama\ollama.exe serve`; the two pulled coder models appear on their own.
 
 A browser front end still exists if you want it — `start-web-ui.cmd`, then
 <http://127.0.0.1:8765/>. It shares the same `MODES` table, but a Chromium tab
 costs hundreds of MB where the Tk window costs tens, so it is the fallback.
 
-Keyboard: **Enter** sends, **Shift+Enter** newlines, **Ctrl+L** clears the chat.
+Keyboard: **Enter** sends, **Shift+Enter** newlines, **Ctrl+L** starts a new chat,
+**Ctrl+J** collapses the right rail.
 
-Built for a 7-inch touchscreen: 13 pt transcript, tall Send button, and the
-secondary actions folded into the **⋯** menu so the header stays one row.
+Built for a 7-inch touchscreen: 11 pt transcript, a composer that grows to seven
+lines, and a window that opens maximised inside the work area so the composer is
+never below the screen edge.
 
 **Dictate** uses the Windows speech engine (`scripts\dictate.ps1`) — offline, no
 model download, no install. It listens for one utterance and stops when you
@@ -123,7 +142,7 @@ name, even if a removal pattern would otherwise hit it.
 
 ## 4. Updates without autostart
 
-The **Updates** button in the header replaces launcher autostart. Steam, Epic,
+The browser UI's **Updates** panel replaces launcher autostart (the desktop shell deliberately keeps only Terminal and Session). Steam, Epic,
 Battle.net and the Microsoft Store all update games *when they run*, so starting
 them at login only moves the check earlier — it is not what keeps games current.
 
@@ -149,7 +168,7 @@ powershell -ExecutionPolicy Bypass -File scripts\code-mode.ps1 -Mode gaming
 
 Also available as the **Trim system for Code Mode** button in the sidebar.
 
-In the desktop app these are the **Trim** and **Unload** buttons: Trim runs the
+In the desktop app both live in the right rail's **Session** tab: Trim runs the
 script below, Unload drops the model from RAM immediately instead of waiting for
 Ollama's keep-alive to expire.
 
@@ -160,8 +179,8 @@ are left alone by default because Armoury Crate owns TDP on this device — pass
 
 ## 6. Code Mode session (the ⚡ button)
 
-One click suspends everything that is not needed to code, and one click puts it
-back. **It suspends, it does not kill** — a resume restores the same process with
+**Session → Code Mode session** (also in the left rail) suspends everything
+that is not needed to code, and one click puts it back. **It suspends, it does not kill** — a resume restores the same process with
 its state, so nothing is lost and nothing is uninstalled.
 
 What it pauses: browsers, OneDrive/Dropbox/Drive sync, Steam / Epic / Battle.net /
@@ -214,7 +233,7 @@ separate from your chat history.
 
 ## 7. Profile switch with restart (the two buttons)
 
-**⋯ → Switch profile + restart…** opens both directions of the trade: one click
+**GPU profile + restart** (left rail or Session tab) opens both directions of the trade: one click
 stages the profile you want, opens Armoury Crate at the GPU setting, and restarts
 with a 25-second cancellable countdown. When the machine comes back up, CodeMode
 sees the staged profile and enters the Code session on its own.
@@ -325,9 +344,9 @@ state/handoff.md         what the next session is told
 state/transcripts/*.md   full transcripts, never trimmed
 ```
 
-Menu: **⋯ → Compact + write handoff now** and **⋯ → Show handoff**. Clearing the
-chat archives the transcript and clears the handoff, because "new session"
-should mean new. If no model is reachable for the summary, a mechanical digest of
+Buttons: **Compact + handoff** in the left rail and **Session → Compact + write
+handoff**. Clearing the chat archives the transcript and clears the handoff,
+because "new session" should mean new. If no model is reachable for the summary, a mechanical digest of
  the last turns is used instead - losing polish beats losing the work.
 
 ## Layout on a 7-inch screen

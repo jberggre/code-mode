@@ -178,6 +178,16 @@ and there is no runtime installed. What follows is sizing logic, not benchmarks:
 backend autodetect; debloat + OS-mode scripts with backups and a protection list;
 this document.
 
+**Recovered 2026-11-06** — the desktop window had been left half-rewritten: no
+model was ever selected (so it refused to send), `_save_session` was called but
+never defined (the first reply raised inside the Tk `after()` callback and froze
+the event loop), the composer sat in a horizontal pane, six sidebar buttons had
+no command, and a test handoff sentence was injected into every system prompt.
+It is now a three-column Freebuff-shaped shell: `app/theme.py` (palette and
+widget system), `app/panels.py` (real terminal, session/RAM rail),
+`app/session_store.py` (atomic chat persistence), and `--selftest` / `--smoke`
+checks that assert the layout, the model choice, and a real token round trip.
+
 **Built now** — context survival: compaction at 72% of the window, full transcript
 archived to state/transcripts/, handoff written to state/handoff.md and injected
 into the next session's system prompt so work continues instead of restarting.

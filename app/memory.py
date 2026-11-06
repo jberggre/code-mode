@@ -29,7 +29,10 @@ import server as core
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(HERE)
-STATE = os.path.join(PROJECT, "state")
+# Redirectable so a test or demo can never write a fake handoff into the real
+# state folder again - that is exactly how a test sentence ended up in every
+# system prompt for three days.
+STATE = os.environ.get("CODEMODE_STATE") or os.path.join(PROJECT, "state")
 TRANSCRIPTS = os.path.join(STATE, "transcripts")
 HANDOFF = os.path.join(STATE, "handoff.md")
 

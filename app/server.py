@@ -33,6 +33,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(HERE)
 
+# The portable build staged by tools/stage.sh: no service, no autostart.
+OLLAMA_EXE = os.path.join(PROJECT, "tools", "ollama", "ollama.exe")
+
 OLLAMA_BASE = os.environ.get("OLLAMA_BASE", "http://127.0.0.1:11434")
 LMS_BASE = os.environ.get("LMS_BASE", "http://127.0.0.1:1234")
 PORT = int(os.environ.get("CODEMODE_PORT", "8765"))
@@ -366,6 +369,25 @@ def pick_backend(backends: list, preferred: str | None) -> dict | None:
     return backends[0]
 
 
+def pick_model(backends: list, preferred: str = "") -> tuple:
+    """(backend, model): exact preference, then the first coder model, then first.
+
+    The desktop window has no other way to choose a model, so this has to work
+    with zero models, one runtime and two runtimes alike.
+    """
+    pairs = [(b, name) for b in (backends or []) for name in (b.get("models") or [])]
+    if not pairs:
+        return None, ""
+    if preferred:
+        for backend, name in pairs:
+            if name == preferred:
+                return backend, name
+    for backend, name in pairs:
+        if re.search(r"coder", name, re.I):
+            return backend, name
+    return pairs[0]
+
+
 # --------------------------------------------------------------------------
 # Context trimming: the machine has ~10 GB usable RAM, so history must fit.
 # --------------------------------------------------------------------------
@@ -486,6 +508,32 @@ def unload_model(backend: dict, model: str) -> str:
         return "unloaded %s" % model
     except Exception as exc:  # noqa: BLE001 - reported to the caller
         return "unload failed: %s" % exc
+
+
+def start_ollama(timeout: int = 25) -> str:
+    """Start the portable Ollama that is already staged, if it is staged.
+
+    The desktop app must distinguish "installed but stopped" from "not
+    installed": two models are pulled on this machine and the server is simply
+    not running, so a message telling the user to install one would be a lie.
+    """
+    if not os.path.exists(OLLAMA_EXE):
+        return "portable Ollama is not staged (expected %s)" % OLLAMA_EXE
+    try:
+        subprocess.Popen(
+            [OLLAMA_EXE, "serve"], cwd=PROJECT,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError as exc:
+        return "could not start Ollama: %s" % exc
+    for _ in range(max(1, int(timeout * 2))):
+        try:
+            _get_json(OLLAMA_BASE + "/api/tags", timeout=0.5)
+            return "Ollama is up at %s" % OLLAMA_BASE
+        except Exception:  # noqa: BLE001 - keep polling until the timeout
+            time.sleep(0.5)
+    return "started Ollama, but it did not answer within %ds" % timeout
 
 
 def winget_apply(timeout: int = 1800) -> dict:
