@@ -34,6 +34,8 @@ try {
   $engine.BabbleTimeout = [TimeSpan]::FromSeconds(45)
   $engine.EndSilenceTimeout = [TimeSpan]::FromMilliseconds(900)
   $engine.SetInputToDefaultAudioDevice()
+  [Console]::Out.WriteLine('READY')
+  [Console]::Out.Flush()
 } catch {
   [Console]::Error.WriteLine('mic/speech error: ' + $_.Exception.Message)
   exit 1
@@ -54,10 +56,22 @@ try {
 }
 """
 
-QUERY = (
-    "[System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers()"
-    " | ForEach-Object { $_.Culture.Name }"
-)
+# Ask for the recognisers *after* loading the assembly that defines them. Without
+# the Add-Type line the type does not exist, PowerShell writes the error to stderr
+# and stdout stays empty - which once looked exactly like "Windows has no speech".
+QUERY = r"""
+$ErrorActionPreference = 'Stop'
+try { Add-Type -AssemblyName System.Speech }
+catch { [Console]::Out.WriteLine('ERR:assembly'); return }
+try {
+  foreach ($r in [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers()) {
+    [Console]::Out.WriteLine('LANG:' + $r.Culture.Name)
+  }
+  [Console]::Out.WriteLine('END')
+} catch {
+  [Console]::Out.WriteLine('ERR:' + $_.Exception.Message)
+}
+"""
 
 
 def _encoded(script: str) -> str:
@@ -74,19 +88,30 @@ def _default_popen():
     )
 
 
-_CACHE = {"languages": None}
+_CACHE = {"languages": None, "answered": False}
 
 
-def installed_languages(refresh: bool = False, timeout: float = 12.0) -> list:
-    """Which dictation languages Windows has available. Empty means none.
+def installed_languages(refresh: bool = False, timeout: float = 12.0):
+    """Dictation languages Windows has, or None if the question went unanswered.
 
-    A machine with no recogniser is the one case where the UI should say
-    "install speech" rather than "speak now" and then fail. The answer is cached
-    because querying it spawns PowerShell for about a second, and the window must
-    not pay that on every refresh.
+    The difference matters: [] means Windows looked and found nothing, so the UI
+    may offer to install speech. None means the probe itself failed (no
+    PowerShell, a crashed query), and telling the user to install something they
+    already have is worse than saying nothing at all.
+
+    Cached because asking spawns PowerShell for about a second, and the window
+    must not pay that on every refresh.
     """
-    if _CACHE["languages"] is not None and not refresh:
-        return list(_CACHE["languages"])
+    if _CACHE["answered"] and not refresh:
+        cached = _CACHE["languages"]
+        return None if cached is None else list(cached)
+    languages = _query(timeout)
+    _CACHE["languages"] = languages
+    _CACHE["answered"] = languages is not None
+    return None if languages is None else list(languages)
+
+
+def _query(timeout: float):
     try:
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -94,10 +119,11 @@ def installed_languages(refresh: bool = False, timeout: float = 12.0) -> list:
             capture_output=True, text=True, timeout=timeout,
             encoding="utf-8", errors="replace", creationflags=CREATE_NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
-        return []
-    languages = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
-    _CACHE["languages"] = languages
-    return list(languages)
+        return None
+    lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+    if not any(line == "END" for line in lines):
+        return None
+    return [line[5:] for line in lines if line.startswith("LANG:")]
 
 
 class Dictation:
@@ -132,8 +158,11 @@ class Dictation:
         try:
             for line in proc.stdout:
                 text = (line or "").strip()
-                if text and not self._stopping.is_set():
-                    self.on_text(text)
+                if not text or self._stopping.is_set():
+                    continue
+                if text == "READY":  # input device bound; not speech
+                    continue
+                self.on_text(text)
         except Exception as exc:  # noqa: BLE001 - reported, never raised into Tk
             if not self._stopping.is_set():
                 self.on_error("speech reader stopped: %s" % exc)

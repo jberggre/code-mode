@@ -663,7 +663,10 @@ class CodeMode(tk.Tk):
                 elif kind == "dictation":
                     self._dictation_result(payload or {})
                 elif kind == "speech":
-                    self.panel.offer_speech_install(not payload)
+                    # None means the probe could not ask; [] means Windows answered
+                    # "none". Only the second may offer to install anything.
+                    self.panel.offer_speech_install(
+                        payload is not None and not payload)
         except queue.Empty:
             pass
         except Exception as exc:  # noqa: BLE001 - one bad event must not stop the loop
@@ -864,7 +867,7 @@ class CodeMode(tk.Tk):
         self.destroy()
 
     def _probe_speech(self) -> None:
-        """Off the UI thread: does this Windows have a recogniser at all?"""
+        """Off the UI thread: which dictation languages does this Windows have?"""
         try:
             languages = speech.installed_languages()
         except Exception:  # noqa: BLE001 - a probe must never break startup
@@ -888,16 +891,19 @@ class CodeMode(tk.Tk):
                      "'-NoProfile','-ExecutionPolicy','Bypass','-File','%s'"
                      % script.replace("'", "''")],
                     capture_output=True, text=True, timeout=30)
-                languages = speech.installed_languages()
+                languages = speech.installed_languages(refresh=True)
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 self.q.put(("note", "install failed: %s" % exc, None))
                 return
             if languages:
                 self.q.put(("note", "speech recogniser installed (%s) \u00b7 Mic works now"
                             % ", ".join(languages), None))
-            else:
+            elif languages == []:
                 self.q.put(("note", "Windows still reports no recogniser \u00b7 finish it "
                                     "in Settings > Time & language > Speech", None))
+            else:
+                self.q.put(("note", "could not ask Windows about its speech recogniser",
+                            None))
 
         threading.Thread(target=job, daemon=True).start()
 
@@ -907,11 +913,15 @@ class CodeMode(tk.Tk):
             self.stop_dictation()
             self._write("\nmic: %s\n" % error, "err")
             low = error.lower()
-            if "speech" in low or "recogni" in low:
+            if "not installed" in low or "assembly" in low or "not found" in low:
                 self._write("This Windows install has no speech recogniser, so the mic "
                             "cannot work yet. Use Session \u2192 Install Windows speech "
                             "(one UAC prompt), or Settings > Time & language > Speech.\n",
                             "sys")
+            elif "audio" in low or "device" in low or "mic" in low:
+                self._write("The engine could not open a microphone. Check Settings > "
+                            "System > Sound > Input, and Privacy > Microphone > let "
+                            "desktop apps use it.\n", "sys")
             return
         text = (info.get("text") or "").strip()
         if not text:

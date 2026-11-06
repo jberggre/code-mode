@@ -106,11 +106,13 @@ Built for a 7-inch touchscreen: 11 pt transcript, a composer that grows to seven
 lines, and a window that opens maximised inside the work area so the composer is
 never below the screen edge.
 
-**Dictate** uses the Windows speech engine (`scripts\dictate.ps1`) — offline, no
-model download, no install. It listens for one utterance and stops when you
-pause. It is dictation-grade: fine for "add a null check before the parse", not
-for dictating identifier names. If Windows says speech is unavailable, enable
-**Settings → Apps → Optional features → Speech**.
+**Dictate** runs on Windows' own speech engine (`app/speech.py`) — offline, no
+model download. One PowerShell child stays alive for the whole session and every
+phrase lands in the composer as you pause, so it keeps listening until you press
+Mic again. It is dictation-grade: fine for "add a null check before the parse",
+not for dictating identifier names. `scripts\dictate.ps1` is the one-shot version
+for a terminal. If Windows genuinely has no recogniser, the app says so and
+offers to install it — a probe that merely fails never claims speech is missing.
 
 Options (environment variables):
 
